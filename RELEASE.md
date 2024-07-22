@@ -1,6 +1,6 @@
 # Release Instructions
 
-Releases are managed by [@taylorotwell](https://github.com/taylorotwell), [@jessarcher](https://github.com/jessarcher), and [@timacdonald](https://github.com/timacdonald) for this repository.
+Releases are managed by [@Angelillo15](https://github.com/Angelillo15) for this repository.
 
 1. Update the version number in [package.json](./package.json) and commit it
 2. `rm -rf node_modules package-lock.json`
