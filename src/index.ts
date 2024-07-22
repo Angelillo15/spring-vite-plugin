@@ -4,7 +4,7 @@ import os from 'os'
 import { fileURLToPath } from 'url'
 import path from 'path'
 import colors from 'picocolors'
-import { Plugin, loadEnv, UserConfig, ConfigEnv, ResolvedConfig, SSROptions, PluginOption } from 'vite'
+import { Plugin, loadEnv, UserConfig, ConfigEnv, ResolvedConfig, PluginOption } from 'vite'
 import fullReload, { Config as FullReloadConfig } from 'vite-plugin-full-reload'
 import { InputOption } from "rollup"
 
@@ -15,9 +15,9 @@ interface PluginConfig {
     input: InputOption
 
     /**
-     * Laravel's public directory.
+     * Spring's public directory.
      *
-     * @default 'public'
+     * @default 'src/main/resources/static/''
      */
     publicDirectory?: string
 
@@ -36,19 +36,7 @@ interface PluginConfig {
     hotFile?: string
 
     /**
-     * The path of the SSR entry point.
-     */
-    ssr?: InputOption
-
-    /**
-     * The directory where the SSR bundle should be written.
-     *
-     * @default 'bootstrap/ssr'
-     */
-    ssrOutputDirectory?: string
-
-    /**
-     * Configuration for performing full page refresh on blade (or other) file changes.
+     * Configuration for performing full page refresh (or other) file changes.
      *
      * {@link https://github.com/ElMassimo/vite-plugin-full-reload}
      * @default false
@@ -81,7 +69,7 @@ interface RefreshConfig {
     config?: FullReloadConfig,
 }
 
-interface LaravelPlugin extends Plugin {
+interface SpringPlugin extends Plugin {
     config: (config: UserConfig, env: ConfigEnv) => UserConfig
 }
 
@@ -90,46 +78,41 @@ type DevServerUrl = `${'http'|'https'}://${string}:${number}`
 let exitHandlersBound = false
 
 export const refreshPaths = [
-    'app/Livewire/**',
-    'app/View/Components/**',
-    'lang/**',
-    'resources/lang/**',
-    'resources/views/**',
-    'routes/**',
+    'src/main/**',
+    'frontend/**',
 ].filter(path => fs.existsSync(path.replace(/\*\*$/, '')))
 
 /**
- * Laravel plugin for Vite.
+ * Spring plugin for Vite.
  *
  * @param config - A config object or relative path(s) of the scripts to be compiled.
  */
-export default function laravel(config: string|string[]|PluginConfig): [LaravelPlugin, ...Plugin[]]  {
+export default function spring(config: string|string[]|PluginConfig): [SpringPlugin, ...Plugin[]]  {
     const pluginConfig = resolvePluginConfig(config)
 
     return [
-        resolveLaravelPlugin(pluginConfig),
+        resolveSpringPlugin(pluginConfig),
         ...resolveFullReloadConfig(pluginConfig) as Plugin[],
     ];
 }
 
 /**
- * Resolve the Laravel Plugin configuration.
+ * Resolve the Spring Plugin configuration.
  */
-function resolveLaravelPlugin(pluginConfig: Required<PluginConfig>): LaravelPlugin {
+function resolveSpringPlugin(pluginConfig: Required<PluginConfig>): SpringPlugin {
     let viteDevServerUrl: DevServerUrl
     let resolvedConfig: ResolvedConfig
     let userConfig: UserConfig
 
     const defaultAliases: Record<string, string> = {
-        '@': '/resources/js',
+        '@': '/frontend/src',
     };
 
     return {
-        name: 'laravel',
+        name: 'spring',
         enforce: 'post',
         config: (config, { command, mode }) => {
             userConfig = config
-            const ssr = !! userConfig.build?.ssr
             const env = loadEnv(mode, userConfig.envDir || process.cwd(), '')
             const assetUrl = env.ASSET_URL ?? ''
             const serverConfig = command === 'serve'
@@ -142,21 +125,15 @@ function resolveLaravelPlugin(pluginConfig: Required<PluginConfig>): LaravelPlug
                 base: userConfig.base ?? (command === 'build' ? resolveBase(pluginConfig, assetUrl) : ''),
                 publicDir: userConfig.publicDir ?? false,
                 build: {
-                    manifest: userConfig.build?.manifest ?? (ssr ? false : 'manifest.json'),
-                    ssrManifest: userConfig.build?.ssrManifest ?? (ssr ? 'ssr-manifest.json' : false),
-                    outDir: userConfig.build?.outDir ?? resolveOutDir(pluginConfig, ssr),
+                    manifest: userConfig.build?.manifest ?? ('manifest.json'),
+                    outDir: userConfig.build?.outDir ?? resolveOutDir(pluginConfig),
                     rollupOptions: {
-                        input: userConfig.build?.rollupOptions?.input ?? resolveInput(pluginConfig, ssr)
+                        input: userConfig.build?.rollupOptions?.input ?? resolveInput(pluginConfig)
                     },
                     assetsInlineLimit: userConfig.build?.assetsInlineLimit ?? 0,
                 },
                 server: {
-                    origin: userConfig.server?.origin ?? '__laravel_vite_placeholder__',
-                    ...(process.env.LARAVEL_SAIL ? {
-                        host: userConfig.server?.host ?? '0.0.0.0',
-                        port: userConfig.server?.port ?? (env.VITE_PORT ? parseInt(env.VITE_PORT) : 5173),
-                        strictPort: userConfig.server?.strictPort ?? true,
-                    } : undefined),
+                    origin: userConfig.server?.origin ?? '__spring_vite_placeholder__',
                     ...(serverConfig ? {
                         host: userConfig.server?.host ?? serverConfig.host,
                         hmr: userConfig.server?.hmr === false ? false : {
@@ -180,9 +157,6 @@ function resolveLaravelPlugin(pluginConfig: Required<PluginConfig>): LaravelPlug
                             ...userConfig.resolve?.alias,
                         }
                 },
-                ssr: {
-                    noExternal: noExternalInertiaHelpers(userConfig),
-                },
             }
         },
         configResolved(config) {
@@ -190,15 +164,12 @@ function resolveLaravelPlugin(pluginConfig: Required<PluginConfig>): LaravelPlug
         },
         transform(code) {
             if (resolvedConfig.command === 'serve') {
-                code = code.replace(/__laravel_vite_placeholder__/g, viteDevServerUrl)
+                code = code.replace(/__spring_vite_placeholder__/g, viteDevServerUrl)
 
                 return pluginConfig.transformOnServe(code, viteDevServerUrl)
             }
         },
         configureServer(server) {
-            const envDir = resolvedConfig.envDir || process.cwd()
-            const appUrl = loadEnv(resolvedConfig.mode, envDir, 'APP_URL').APP_URL ?? 'undefined'
-
             server.httpServer?.once('listening', () => {
                 const address = server.httpServer?.address()
 
@@ -209,9 +180,8 @@ function resolveLaravelPlugin(pluginConfig: Required<PluginConfig>): LaravelPlug
                     fs.writeFileSync(pluginConfig.hotFile, `${viteDevServerUrl}${server.config.base.replace(/\/$/, '')}`)
 
                     setTimeout(() => {
-                        server.config.logger.info(`\n  ${colors.red(`${colors.bold('LARAVEL')} ${laravelVersion()}`)}  ${colors.dim('plugin')} ${colors.bold(`v${pluginVersion()}`)}`)
+                        server.config.logger.info(`\n  ${colors.green(`${colors.bold('Spring')}`)}  ${colors.dim('plugin')} ${colors.bold(`v${pluginVersion()}`)}`)
                         server.config.logger.info('')
-                        server.config.logger.info(`  ${colors.green('➜')}  ${colors.bold('APP_URL')}: ${colors.cyan(appUrl.replace(/:(\d+)/, (_, port) => `:${colors.bold(port)}`))}`)
 
                         if (typeof resolvedConfig.server.https === 'object' && typeof resolvedConfig.server.https.key === 'string') {
                             if (resolvedConfig.server.https.key.startsWith(herdMacConfigPath()) || resolvedConfig.server.https.key.startsWith(herdWindowsConfigPath())) {
@@ -246,7 +216,7 @@ function resolveLaravelPlugin(pluginConfig: Required<PluginConfig>): LaravelPlug
                     res.statusCode = 404
 
                     res.end(
-                        fs.readFileSync(path.join(dirname(), 'dev-server-index.html')).toString().replace(/{{ APP_URL }}/g, appUrl)
+                        fs.readFileSync(path.join(dirname(), 'dev-server-index.html')).toString()
                     )
                 }
 
@@ -259,43 +229,14 @@ function resolveLaravelPlugin(pluginConfig: Required<PluginConfig>): LaravelPlug
 /**
  * Validate the command can run in the given environment.
  */
+// eslint-disable-next-line @typescript-eslint/no-unused-vars
 function ensureCommandShouldRunInEnvironment(command: 'build'|'serve', env: Record<string, string>): void {
-    if (command === 'build' || env.LARAVEL_BYPASS_ENV_CHECK === '1') {
-        return;
-    }
-
-    if (typeof env.LARAVEL_VAPOR !== 'undefined') {
-        throw Error('You should not run the Vite HMR server on Vapor. You should build your assets for production instead. To disable this ENV check you may set LARAVEL_BYPASS_ENV_CHECK=1');
-    }
-
-    if (typeof env.LARAVEL_FORGE !== 'undefined') {
-        throw Error('You should not run the Vite HMR server in your Forge deployment script. You should build your assets for production instead. To disable this ENV check you may set LARAVEL_BYPASS_ENV_CHECK=1');
-    }
-
-    if (typeof env.LARAVEL_ENVOYER !== 'undefined') {
-        throw Error('You should not run the Vite HMR server in your Envoyer hook. You should build your assets for production instead. To disable this ENV check you may set LARAVEL_BYPASS_ENV_CHECK=1')
-    }
-
-    if (typeof env.CI !== 'undefined') {
-        throw Error('You should not run the Vite HMR server in CI environments. You should build your assets for production instead. To disable this ENV check you may set LARAVEL_BYPASS_ENV_CHECK=1')
-    }
+    // todo implement logic for Spring
 }
 
-/**
- * The version of Laravel being run.
- */
-function laravelVersion(): string {
-    try {
-        const composer = JSON.parse(fs.readFileSync('composer.lock').toString())
-
-        return composer.packages?.find((composerPackage: {name: string}) => composerPackage.name === 'laravel/framework')?.version ?? ''
-    } catch {
-        return ''
-    }
-}
 
 /**
- * The version of the Laravel Vite plugin being run.
+ * The version of the Spring Vite plugin being run.
  */
 function pluginVersion(): string {
     try {
@@ -310,22 +251,22 @@ function pluginVersion(): string {
  */
 function resolvePluginConfig(config: string|string[]|PluginConfig): Required<PluginConfig> {
     if (typeof config === 'undefined') {
-        throw new Error('laravel-vite-plugin: missing configuration.')
+        throw new Error('spring-vite-plugin: missing configuration.')
     }
 
     if (typeof config === 'string' || Array.isArray(config)) {
-        config = { input: config, ssr: config }
+        config = { input: config }
     }
 
     if (typeof config.input === 'undefined') {
-        throw new Error('laravel-vite-plugin: missing configuration for "input".')
+        throw new Error('spring-vite-plugin: missing configuration for "input".')
     }
 
     if (typeof config.publicDirectory === 'string') {
         config.publicDirectory = config.publicDirectory.trim().replace(/^\/+/, '')
 
         if (config.publicDirectory === '') {
-            throw new Error('laravel-vite-plugin: publicDirectory must be a subdirectory. E.g. \'public\'.')
+            throw new Error('spring-vite-plugin: publicDirectory must be a subdirectory. E.g. \'public\'.')
         }
     }
 
@@ -333,12 +274,8 @@ function resolvePluginConfig(config: string|string[]|PluginConfig): Required<Plu
         config.buildDirectory = config.buildDirectory.trim().replace(/^\/+/, '').replace(/\/+$/, '')
 
         if (config.buildDirectory === '') {
-            throw new Error('laravel-vite-plugin: buildDirectory must be a subdirectory. E.g. \'build\'.')
+            throw new Error('spring-vite-plugin: buildDirectory must be a subdirectory. E.g. \'build\'.')
         }
-    }
-
-    if (typeof config.ssrOutputDirectory === 'string') {
-        config.ssrOutputDirectory = config.ssrOutputDirectory.trim().replace(/^\/+/, '').replace(/\/+$/, '')
     }
 
     if (config.refresh === true) {
@@ -349,8 +286,6 @@ function resolvePluginConfig(config: string|string[]|PluginConfig): Required<Plu
         input: config.input,
         publicDirectory: config.publicDirectory ?? 'public',
         buildDirectory: config.buildDirectory ?? 'build',
-        ssr: config.ssr ?? config.input,
-        ssrOutputDirectory: config.ssrOutputDirectory ?? 'bootstrap/ssr',
         refresh: config.refresh ?? false,
         hotFile: config.hotFile ?? path.join((config.publicDirectory ?? 'public'), 'hot'),
         valetTls: config.valetTls ?? null,
@@ -369,10 +304,7 @@ function resolveBase(config: Required<PluginConfig>, assetUrl: string): string {
 /**
  * Resolve the Vite input path from the configuration.
  */
-function resolveInput(config: Required<PluginConfig>, ssr: boolean): InputOption|undefined {
-    if (ssr) {
-        return config.ssr
-    }
+function resolveInput(config: Required<PluginConfig>): InputOption|undefined {
 
     return config.input
 }
@@ -380,11 +312,7 @@ function resolveInput(config: Required<PluginConfig>, ssr: boolean): InputOption
 /**
  * Resolve the Vite outDir path from the configuration.
  */
-function resolveOutDir(config: Required<PluginConfig>, ssr: boolean): string|undefined {
-    if (ssr) {
-        return config.ssrOutputDirectory
-    }
-
+function resolveOutDir(config: Required<PluginConfig>): string|undefined {
     return path.join(config.publicDirectory, config.buildDirectory)
 }
 
@@ -410,7 +338,7 @@ function resolveFullReloadConfig({ refresh: config }: Required<PluginConfig>): P
 
         /* eslint-disable-next-line @typescript-eslint/ban-ts-comment */
         /** @ts-ignore */
-        plugin.__laravel_plugin_config = c
+        plugin.__spring_plugin_config = c
 
         return plugin
     })
@@ -427,9 +355,9 @@ function resolveDevServerUrl(address: AddressInfo, config: ResolvedConfig, userC
 
     const configHmrHost = typeof config.server.hmr === 'object' ? config.server.hmr.host : null
     const configHost = typeof config.server.host === 'string' ? config.server.host : null
-    const sailHost = process.env.LARAVEL_SAIL && ! userConfig.server?.host ? 'localhost' : null
+    const userHost = userConfig.server?.host ? 'localhost' : null
     const serverAddress = isIpv6(address) ? `[${address.address}]` : address.address
-    const host = configHmrHost ?? sailHost ?? configHost ?? serverAddress
+    const host = configHmrHost ?? userHost ?? configHost ?? serverAddress
 
     const configHmrClientPort = typeof config.server.hmr === 'object' ? config.server.hmr.clientPort : null
     const port = configHmrClientPort ?? address.port
@@ -444,31 +372,6 @@ function isIpv6(address: AddressInfo): boolean {
         // eslint-disable-next-line @typescript-eslint/ban-ts-comment
         // @ts-ignore-next-line
         || address.family === 6;
-}
-
-/**
- * Add the Inertia helpers to the list of SSR dependencies that aren't externalized.
- *
- * @see https://vitejs.dev/guide/ssr.html#ssr-externals
- */
-function noExternalInertiaHelpers(config: UserConfig): true|Array<string|RegExp> {
-    /* eslint-disable-next-line @typescript-eslint/ban-ts-comment */
-    /* @ts-ignore */
-    const userNoExternal = (config.ssr as SSROptions|undefined)?.noExternal
-    const pluginNoExternal = ['laravel-vite-plugin']
-
-    if (userNoExternal === true) {
-        return true
-    }
-
-    if (typeof userNoExternal === 'undefined') {
-        return pluginNoExternal
-    }
-
-    return [
-        ...(Array.isArray(userNoExternal) ? userNoExternal : [userNoExternal]),
-        ...pluginNoExternal,
-    ]
 }
 
 /**
@@ -506,13 +409,11 @@ function resolveEnvironmentServerConfig(env: Record<string, string>): {
 /**
  * Resolve the host name from the environment.
  */
+// eslint-disable-next-line @typescript-eslint/no-unused-vars
 function resolveHostFromEnv(env: Record<string, string>): string|undefined
 {
-    try {
-        return new URL(env.APP_URL).host
-    } catch {
-        return
-    }
+    // todo implement logic for Spring
+    return
 }
 
 /**
