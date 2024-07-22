@@ -1,19 +1,20 @@
 {
-    "name": "laravel-vite-plugin",
-    "version": "1.0.5",
-    "description": "Laravel plugin for Vite.",
+    "name": "spring-vite-plugin",
+    "version": "0.1.0",
+    "description": "Spring unnofficial Vite plugin",
     "keywords": [
-        "laravel",
+        "spring",
         "vite",
-        "vite-plugin"
+        "vite-plugin",
+        "spring-boot"
     ],
-    "homepage": "https://github.com/laravel/vite-plugin",
+    "homepage": "https://github.com/Angelillo15/spring-vite-plugin",
     "repository": {
         "type": "git",
-        "url": "https://github.com/laravel/vite-plugin"
+        "url": "https://github.com/Angelillo15/spring-vite-plugin"
     },
     "license": "MIT",
-    "author": "Laravel",
+    "author": "Laravel + Angelillo15",
     "type": "module",
     "exports": {
         ".": {
@@ -39,8 +40,7 @@
         "build-plugin-types": "tsc --emitDeclarationOnly",
         "build-plugin-esm": "esbuild src/index.ts --platform=node --format=esm --outfile=dist/index.js",
         "build-inertia-helpers": "rm -rf inertia-helpers && tsc --project tsconfig.inertia-helpers.json",
-        "lint": "eslint --ext .ts ./src ./tests",
-        "test": "vitest run"
+        "lint": "eslint --ext .ts ./src"
     },
     "devDependencies": {
         "@types/node": "^18.11.9",
